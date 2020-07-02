@@ -103,7 +103,7 @@ export function visitResult(
   if (data != null) {
     result.data = visitRoot(
       data,
-      getOperationAST(request.document),
+      getOperationAST(request.document, undefined),
       partialExecutionContext,
       resultVisitorMap,
       visitingErrors ? errors : undefined,

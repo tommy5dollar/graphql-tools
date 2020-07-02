@@ -7,14 +7,16 @@ import {
   removeObjectFields,
   Transform,
   Request,
+  ExecutionResult,
+  unwrapValue,
 } from '@graphql-tools/utils';
 
+import { defaultMergedResolver } from '@graphql-tools/delegate';
+
 import MapFields from './MapFields';
-import { createMergedResolver } from '@graphql-tools/delegate';
 
 export default class HoistField implements Transform {
   private readonly typeName: string;
-  private readonly path: Array<string>;
   private readonly newFieldName: string;
   private readonly pathToField: Array<string>;
   private readonly oldFieldName: string;
@@ -22,16 +24,25 @@ export default class HoistField implements Transform {
 
   constructor(typeName: string, path: Array<string>, newFieldName: string) {
     this.typeName = typeName;
-    this.path = path;
     this.newFieldName = newFieldName;
 
-    this.pathToField = this.path.slice();
-    this.oldFieldName = this.pathToField.pop();
-    this.transformer = new MapFields({
-      [typeName]: {
-        [newFieldName]: fieldNode => wrapFieldNode(renameFieldNode(fieldNode, this.oldFieldName), this.pathToField),
+    const pathToField = path.slice();
+    const oldFieldName = pathToField.pop();
+
+    this.oldFieldName = oldFieldName;
+    this.pathToField = pathToField;
+    this.transformer = new MapFields(
+      {
+        [typeName]: {
+          [newFieldName]: fieldNode => wrapFieldNode(renameFieldNode(fieldNode, oldFieldName), pathToField),
+        },
       },
-    });
+      {
+        [typeName]: value => {
+          return unwrapValue(value, pathToField);
+        },
+      }
+    );
   }
 
   public transformSchema(schema: GraphQLSchema): GraphQLSchema {
@@ -53,14 +64,26 @@ export default class HoistField implements Transform {
     newSchema = appendObjectFields(newSchema, this.typeName, {
       [this.newFieldName]: {
         type: targetType,
-        resolve: createMergedResolver({ fromPath: this.pathToField }),
+        resolve: defaultMergedResolver,
       },
     });
 
     return this.transformer.transformSchema(newSchema);
   }
 
-  public transformRequest(originalRequest: Request): Request {
-    return this.transformer.transformRequest(originalRequest);
+  public transformRequest(
+    originalRequest: Request,
+    delegationContext?: Record<string, any>,
+    transformationContext?: Record<string, any>
+  ): Request {
+    return this.transformer.transformRequest(originalRequest, delegationContext, transformationContext);
+  }
+
+  public transformResult(
+    originalResult: ExecutionResult,
+    delegationContext?: Record<string, any>,
+    transformationContext?: Record<string, any>
+  ): ExecutionResult {
+    return this.transformer.transformResult(originalResult, delegationContext, transformationContext);
   }
 }

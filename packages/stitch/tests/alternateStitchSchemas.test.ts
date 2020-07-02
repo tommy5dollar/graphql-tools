@@ -31,8 +31,8 @@ import {
 
 import {
   delegateToSchema,
-  createMergedResolver,
-  SubschemaConfig
+  SubschemaConfig,
+  defaultMergedResolver
 } from '@graphql-tools/delegate';
 
 import { makeExecutableSchema } from '@graphql-tools/schema';
@@ -42,6 +42,9 @@ import {
   hoistFieldNodes,
   filterSchema,
   ExecutionResult,
+  dehoistValue,
+  dehoistErrors,
+  unwrapValue,
 } from '@graphql-tools/utils';
 
 import { stitchSchemas } from '../src/stitchSchemas';
@@ -1034,7 +1037,7 @@ describe('schema transformation with extraction of nested fields', () => {
         `,
         resolvers: {
           Property: {
-            locationName: createMergedResolver({ fromPath: ['location'] }),
+            locationName: defaultMergedResolver,
           },
         },
         fieldNodeTransformerMap: {
@@ -1044,6 +1047,11 @@ describe('schema transformation with extraction of nested fields', () => {
             renamedError: (fieldNode) => renameFieldNode(fieldNode, 'error'),
           },
         },
+        objectValueTransformerMap: {
+          Property: (value) => {
+            return unwrapValue(value, ['location']);
+          },
+        }
       }),
     ]);
 
@@ -1145,7 +1153,7 @@ describe('schema transformation with wrapping of object fields', () => {
         `,
         resolvers: {
           Property: {
-            outerWrap: createMergedResolver({ dehoist: true }),
+            outerWrap: defaultMergedResolver,
           },
         },
         fieldNodeTransformerMap: {
@@ -1159,6 +1167,10 @@ describe('schema transformation with wrapping of object fields', () => {
               }),
           },
         },
+        objectValueTransformerMap: {
+          Property: (value) => dehoistValue(value),
+        },
+        errorsTransformer: (errors) => dehoistErrors(errors),
       }),
     ]);
 

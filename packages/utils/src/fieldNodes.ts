@@ -1,4 +1,5 @@
-import { FieldNode, Kind, FragmentDefinitionNode, SelectionSetNode } from 'graphql';
+import { FieldNode, Kind, FragmentDefinitionNode, SelectionSetNode, GraphQLError } from 'graphql';
+import { relocatedError } from './errors';
 
 export function renameFieldNode(fieldNode: FieldNode, name: string): FieldNode {
   return {
@@ -119,4 +120,67 @@ export function hoistFieldNodes({
   }
 
   return newFieldNodes;
+}
+
+export function dehoistValue(originalValue: any, delimiter = '__gqltf__'): any {
+  if (originalValue == null) {
+    return originalValue;
+  }
+
+  const newValue = Object.create(null);
+
+  Object.keys(originalValue).forEach(alias => {
+    let obj = newValue;
+
+    const fieldNames = alias.split(delimiter);
+    const fieldName = fieldNames.pop();
+    fieldNames.forEach(key => {
+      obj = obj[key] = obj[key] || Object.create(null);
+    });
+    obj[fieldName] = originalValue[alias];
+  });
+
+  return newValue;
+}
+
+export function dehoistErrors(errors: ReadonlyArray<GraphQLError>, delimiter = '__gqltf__'): Array<GraphQLError> {
+  if (errors === undefined) {
+    return undefined;
+  }
+
+  return errors.map(error => {
+    const path = error.path;
+    if (path == null) {
+      return error;
+    }
+
+    let newPath: Array<string | number> = [];
+    path.forEach(pathSegment => {
+      if (typeof pathSegment === 'string') {
+        newPath = newPath.concat(pathSegment.split(delimiter));
+      } else {
+        newPath.push(pathSegment);
+      }
+    });
+    return relocatedError(error, newPath);
+  });
+}
+
+export function unwrapValue(originalValue: any, path: Array<string>): any {
+  let newValue = originalValue;
+
+  const pathLength = path.length;
+  for (let i = 0; i < pathLength; i++) {
+    const responseKey = path[i];
+    const object = newValue[responseKey];
+    if (object == null) {
+      break;
+    }
+    newValue = object;
+  }
+
+  delete originalValue[path[0]];
+  Object.assign(originalValue, newValue);
+
+  return originalValue;
 }

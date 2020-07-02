@@ -1,4 +1,4 @@
-import { GraphQLSchema, GraphQLObjectType } from 'graphql';
+import { GraphQLSchema, GraphQLObjectType, GraphQLResolveInfo, GraphQLFieldResolver } from 'graphql';
 
 import {
   Transform,
@@ -7,10 +7,27 @@ import {
   appendObjectFields,
   selectObjectFields,
   modifyObjectFields,
+  ExecutionResult,
+  dehoistValue,
+  dehoistErrors,
 } from '@graphql-tools/utils';
-import { createMergedResolver, defaultMergedResolver } from '@graphql-tools/delegate';
+
+import { defaultMergedResolver } from '@graphql-tools/delegate';
 
 import MapFields from './MapFields';
+
+function defaultWrappingResolver(
+  parent: any,
+  args: Record<string, any>,
+  context: Record<string, any>,
+  info: GraphQLResolveInfo
+): any {
+  if (!parent) {
+    return {};
+  }
+
+  return defaultMergedResolver(parent, args, context, info);
+}
 
 export default class WrapFields implements Transform {
   private readonly outerTypeName: string;
@@ -18,33 +35,42 @@ export default class WrapFields implements Transform {
   private readonly wrappingTypeNames: Array<string>;
   private readonly numWraps: number;
   private readonly fieldNames: Array<string>;
+  private readonly wrappingResolver: GraphQLFieldResolver<any, any>;
   private readonly transformer: Transform;
 
   constructor(
     outerTypeName: string,
     wrappingFieldNames: Array<string>,
     wrappingTypeNames: Array<string>,
-    fieldNames?: Array<string>
+    fieldNames?: Array<string>,
+    wrappingResolver: GraphQLFieldResolver<any, any> = defaultWrappingResolver
   ) {
     this.outerTypeName = outerTypeName;
     this.wrappingFieldNames = wrappingFieldNames;
     this.wrappingTypeNames = wrappingTypeNames;
     this.numWraps = wrappingFieldNames.length;
     this.fieldNames = fieldNames;
+    this.wrappingResolver = wrappingResolver;
 
     const remainingWrappingFieldNames = this.wrappingFieldNames.slice();
     const outerMostWrappingFieldName = remainingWrappingFieldNames.shift();
-    this.transformer = new MapFields({
-      [outerTypeName]: {
-        [outerMostWrappingFieldName]: (fieldNode, fragments) =>
-          hoistFieldNodes({
-            fieldNode,
-            path: remainingWrappingFieldNames,
-            fieldNames: this.fieldNames,
-            fragments,
-          }),
+    this.transformer = new MapFields(
+      {
+        [outerTypeName]: {
+          [outerMostWrappingFieldName]: (fieldNode, fragments) =>
+            hoistFieldNodes({
+              fieldNode,
+              path: remainingWrappingFieldNames,
+              fieldNames,
+              fragments,
+            }),
+        },
       },
-    });
+      {
+        [outerTypeName]: value => dehoistValue(value),
+      },
+      errors => dehoistErrors(errors)
+    );
   }
 
   public transformSchema(schema: GraphQLSchema): GraphQLSchema {
@@ -66,7 +92,7 @@ export default class WrapFields implements Transform {
       newSchema = appendObjectFields(newSchema, nextWrappingTypeName, {
         [wrappingFieldName]: {
           type: newSchema.getType(wrappingTypeName) as GraphQLObjectType,
-          resolve: defaultMergedResolver,
+          resolve: this.wrappingResolver,
         },
       });
 
@@ -82,7 +108,7 @@ export default class WrapFields implements Transform {
       {
         [wrappingFieldName]: {
           type: newSchema.getType(wrappingTypeName) as GraphQLObjectType,
-          resolve: createMergedResolver({ dehoist: true }),
+          resolve: this.wrappingResolver,
         },
       }
     );
@@ -90,7 +116,19 @@ export default class WrapFields implements Transform {
     return this.transformer.transformSchema(newSchema);
   }
 
-  public transformRequest(originalRequest: Request): Request {
-    return this.transformer.transformRequest(originalRequest);
+  public transformRequest(
+    originalRequest: Request,
+    delegationContext: Record<string, any>,
+    transformationContext: Record<string, any>
+  ): Request {
+    return this.transformer.transformRequest(originalRequest, delegationContext, transformationContext);
+  }
+
+  public transformResult(
+    originalResult: ExecutionResult,
+    delegationContext: Record<string, any>,
+    transformationContext: Record<string, any>
+  ): ExecutionResult {
+    return this.transformer.transformResult(originalResult, delegationContext, transformationContext);
   }
 }
